@@ -39,15 +39,28 @@ class Detector(
 
     fun setup() {
         val model = FileUtil.loadMappedFile(context, modelPath)
-        val options = Interpreter.Options()
-        // Prefer NNAPI; fall back to CPU with fewer threads to avoid thermal throttling
+        
+        // Try with NNAPI first, fallback to CPU if it fails
         try {
+            val options = Interpreter.Options()
             nnapi = NnApiDelegate()
             options.addDelegate(nnapi)
-        } catch (_: Throwable) {
-            options.numThreads = 2
+            interpreter = Interpreter(model, options)
+            android.util.Log.i("Detector", "✓ Using NNAPI hardware acceleration")
+        } catch (e: Throwable) {
+            // NNAPI failed (common with mixed precision models on some devices)
+            android.util.Log.w("Detector", "NNAPI delegate failed: ${e.message}")
+            android.util.Log.i("Detector", "→ Falling back to CPU execution (2 threads)")
+            
+            // Clean up failed NNAPI delegate
+            try { nnapi?.close() } catch (_: Throwable) {}
+            nnapi = null
+            
+            // Retry with CPU-only configuration
+            val cpuOptions = Interpreter.Options()
+            cpuOptions.numThreads = 2
+            interpreter = Interpreter(model, cpuOptions)
         }
-        interpreter = Interpreter(model, options)
 
         val inputShape = interpreter?.getInputTensor(0)?.shape() ?: return
         val outputShape = interpreter?.getOutputTensor(0)?.shape() ?: return
