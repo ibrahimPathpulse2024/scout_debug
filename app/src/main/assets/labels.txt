@@ -1,0 +1,9 @@
+Ambulance
+Bike
+Bus
+Car
+Truck
+With Helmet
+Without Helmet
+license_plate
+potholes
