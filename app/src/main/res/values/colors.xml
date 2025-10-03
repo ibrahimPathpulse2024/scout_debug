@@ -3,4 +3,6 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="bounding_box_color">#234567</color>
+    <color name="splashscreen_background">#050F0A</color>
+    <color name="iconBackground">#050F0A</color>
 </resources>

@@ -3,15 +3,22 @@ package com.surendramaran.yolov8tflite
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Surface
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.surendramaran.yolov8tflite.Constants.LABELS_PATH
 import com.surendramaran.yolov8tflite.Constants.MODEL_PATH
 import com.surendramaran.yolov8tflite.databinding.ActivityMainBinding
@@ -36,6 +43,10 @@ class MainActivity : AppCompatActivity(), Detector.DetectorListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Enable immersive fullscreen mode (hide status bar and navigation bar)
+        enableImmersiveMode()
+        
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -49,6 +60,36 @@ class MainActivity : AppCompatActivity(), Detector.DetectorListener {
         }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
+
+        // End Tracking button click handler
+        binding.btnEndTracking.setOnClickListener {
+            stopTracking()
+        }
+    }
+
+    private fun enableImmersiveMode() {
+        // Hide status bar and navigation bar for true fullscreen experience
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            // Re-enable immersive mode when regaining focus
+            enableImmersiveMode()
+        }
+    }
+
+    private fun stopTracking() {
+        // Clean up resources
+        detector.clear()
+        cameraExecutor.shutdown()
+        
+        // Close the app
+        finishAndRemoveTask()
     }
 
     private fun startCamera() {
