@@ -5,13 +5,11 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.nnapi.NnApiDelegate
 import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.common.ops.CastOp
 import org.tensorflow.lite.support.common.ops.NormalizeOp
 import org.tensorflow.lite.support.image.ImageProcessor
 import org.tensorflow.lite.support.image.TensorImage
-import org.tensorflow.lite.support.image.ops.ResizeOp
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.io.BufferedReader
 import java.io.IOException
@@ -26,7 +24,6 @@ class Detector(
 ) {
 
     private var interpreter: Interpreter? = null
-    private var nnapi: NnApiDelegate? = null
     private var labels = mutableListOf<String>()
 
     private var tensorWidth = 0
@@ -34,33 +31,16 @@ class Detector(
     private var numChannel = 0
     private var numElements = 0
 
-    // ImageProcessor now includes ResizeOp so we DO NOT create a scaled Bitmap
-    private var imageProcessor: ImageProcessor? = null
+    private val imageProcessor = ImageProcessor.Builder()
+        .add(NormalizeOp(INPUT_MEAN, INPUT_STANDARD_DEVIATION))
+        .add(CastOp(INPUT_IMAGE_TYPE))
+        .build()
 
     fun setup() {
         val model = FileUtil.loadMappedFile(context, modelPath)
-        
-        // Try with NNAPI first, fallback to CPU if it fails
-        try {
-            val options = Interpreter.Options()
-            nnapi = NnApiDelegate()
-            options.addDelegate(nnapi)
-            interpreter = Interpreter(model, options)
-            android.util.Log.i("Detector", "✓ Using NNAPI hardware acceleration")
-        } catch (e: Throwable) {
-            // NNAPI failed (common with mixed precision models on some devices)
-            android.util.Log.w("Detector", "NNAPI delegate failed: ${e.message}")
-            android.util.Log.i("Detector", "→ Falling back to CPU execution (2 threads)")
-            
-            // Clean up failed NNAPI delegate
-            try { nnapi?.close() } catch (_: Throwable) {}
-            nnapi = null
-            
-            // Retry with CPU-only configuration
-            val cpuOptions = Interpreter.Options()
-            cpuOptions.numThreads = 2
-            interpreter = Interpreter(model, cpuOptions)
-        }
+        val options = Interpreter.Options()
+        options.numThreads = 4
+        interpreter = Interpreter(model, options)
 
         val inputShape = interpreter?.getInputTensor(0)?.shape() ?: return
         val outputShape = interpreter?.getOutputTensor(0)?.shape() ?: return
@@ -69,13 +49,6 @@ class Detector(
         tensorHeight = inputShape[2]
         numChannel = outputShape[1]
         numElements = outputShape[2]
-
-        // Build processor once we know input size
-        imageProcessor = ImageProcessor.Builder()
-            .add(ResizeOp(tensorHeight, tensorWidth, ResizeOp.ResizeMethod.BILINEAR))
-            .add(NormalizeOp(INPUT_MEAN, INPUT_STANDARD_DEVIATION))
-            .add(CastOp(INPUT_IMAGE_TYPE))
-            .build()
 
         try {
             val inputStream: InputStream = context.assets.open(labelPath)
@@ -95,43 +68,44 @@ class Detector(
     }
 
     fun clear() {
-        try { interpreter?.close() } catch (_: Throwable) {}
+        interpreter?.close()
         interpreter = null
-        try { nnapi?.close() } catch (_: Throwable) {}
-        nnapi = null
     }
 
     fun detect(frame: Bitmap) {
-        val interp = interpreter ?: return
-        if (tensorWidth == 0 || tensorHeight == 0 || numChannel == 0 || numElements == 0) return
+        interpreter ?: return
+        if (tensorWidth == 0) return
+        if (tensorHeight == 0) return
+        if (numChannel == 0) return
+        if (numElements == 0) return
 
         var inferenceTime = SystemClock.uptimeMillis()
 
-        // No Bitmap.createScaledBitmap — resize happens in ImageProcessor
+        val resizedBitmap = Bitmap.createScaledBitmap(frame, tensorWidth, tensorHeight, false)
+
         val tensorImage = TensorImage(DataType.FLOAT32)
-        tensorImage.load(frame)
-        val processedImage = imageProcessor!!.process(tensorImage)
+        tensorImage.load(resizedBitmap)
+        val processedImage = imageProcessor.process(tensorImage)
         val imageBuffer = processedImage.buffer
 
-        val output = TensorBuffer.createFixedSize(
-            intArrayOf(1, numChannel, numElements),
-            OUTPUT_IMAGE_TYPE
-        )
-        interp.run(imageBuffer, output.buffer)
+        val output = TensorBuffer.createFixedSize(intArrayOf(1 , numChannel, numElements), OUTPUT_IMAGE_TYPE)
+        interpreter?.run(imageBuffer, output.buffer)
+
 
         val bestBoxes = bestBox(output.floatArray)
         inferenceTime = SystemClock.uptimeMillis() - inferenceTime
+
 
         if (bestBoxes == null) {
             detectorListener.onEmptyDetect()
             return
         }
+
         detectorListener.onDetect(bestBoxes, inferenceTime)
     }
 
-    // ---- Your existing post-processing (unchanged) ----
-
     private fun bestBox(array: FloatArray) : List<BoundingBox>? {
+
         val boundingBoxes = mutableListOf<BoundingBox>()
 
         for (c in 0 until numElements) {
@@ -174,6 +148,7 @@ class Detector(
         }
 
         if (boundingBoxes.isEmpty()) return null
+
         return applyNMS(boundingBoxes)
     }
 
@@ -195,6 +170,7 @@ class Detector(
                 }
             }
         }
+
         return selectedBoxes
     }
 
